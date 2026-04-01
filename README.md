@@ -93,6 +93,7 @@ vs traditional 30+ second compile/flash cycles.
 | Anker 10,000mAh 30W Power Bank | Powers Uno Q + peripherals |
 | BENFEI 6-in-1 USB C Hub | Connects power + webcam to Uno Q |
 | Logitech HD 1080p USB Webcam | Vision |
+<img src="./hardware/Schematic.png"/>
 
 ## Getting Started
 _Coming soon — setup instructions, wiring guide, and skill configuration._
