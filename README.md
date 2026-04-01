@@ -114,4 +114,4 @@ that can be deployed and retasked in the field using nothing but
 natural language.
 
 ## License
-MIT[LICENSE]
+[MIT](./LICENSE)
