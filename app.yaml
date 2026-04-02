@@ -1,5 +1,5 @@
 name: ClawBot
-description: ""
+description: "A swarm of specialized AI agents that interpret natural language commands and dynamically rewrite robot behavior in real time; no manual coding required."
 ports: []
 bricks:
   - arduino:video_object_detection: {}
