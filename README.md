@@ -29,9 +29,13 @@ clawbot/
     primitives.md
     base_rules.md
     behavior_template.md
+  python/
+    main.py
+  sketch/
+    sketch.ino
+    sketch.yaml
+  app.yaml
   blackboard.json
-  behavior.py
-  base.ino
   README.md
 ```
 
