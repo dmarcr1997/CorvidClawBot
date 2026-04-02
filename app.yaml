@@ -1,0 +1,6 @@
+name: ClawBot
+description: ""
+ports: []
+bricks:
+  - arduino:video_object_detection: {}
+icon: 😀
