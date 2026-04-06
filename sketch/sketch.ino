@@ -1,3 +1,5 @@
+// NOT USED - see CameraMotorServerBot/CameraWebServer.ino for the current rover code
+// kept here for reference
 #include "Arduino_RouterBridge.h"
 
 // Pin definitions - update when DRV8833 arrives
@@ -71,7 +73,6 @@ void wobble() {
   stop();
 }
 
-// Placeholder - expand when sensors are added
 int get_sensor_reading() {
   return 0;
 }
