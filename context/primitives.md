@@ -1,34 +1,63 @@
-# ClawBot Bridge Primitives
+# ClawBot HTTP Primitives
 
-These are the RPC functions exposed by the STM32 side via Arduino_RouterBridge.
-Codegen agents MUST only use these functions in behavior.py.
+These are the HTTP endpoints exposed by the ESP32-S3 WROOM rover web server.
+Codegen agents MUST only use these endpoints in behavior.py.
 
-## Movement
+## Rover Base URL
 
-| Function               | Params                      | Description                                      |
-| ---------------------- | --------------------------- | ------------------------------------------------ |
-| `move(speed, forward)` | speed: 0-100, forward: bool | Move rover forward or backward                   |
-| `turn(speed, left)`    | speed: 0-100, left: bool    | Turn rover left or right                         |
-| `stop()`               | none                        | Immediately stop all motors                      |
-| `wobble()`             | none                        | Wobble animation — plays during behavior updates |
+```python
+ROVER_URL = "http://192.168.1.99"
+```
 
-## Sensors
+## Movement Endpoints
 
-| Function               | Params | Description                                       |
-| ---------------------- | ------ | ------------------------------------------------- |
-| `get_sensor_reading()` | none   | Returns current sensor data (stub — expand later) |
+| Endpoint                      | Params                       | Description                                      |
+| ----------------------------- | ---------------------------- | ------------------------------------------------ |
+| `GET /move?direction=forward` | direction: forward\|backward | Drive rover forward or backward                  |
+| `GET /turn?direction=left`    | direction: left\|right       | Turn rover left or right                         |
+| `GET /stop`                   | none                         | Immediately stop all motors                      |
+| `GET /wobble`                 | none                         | Wobble animation — plays during behavior updates |
 
-## Speed
+## Vision Endpoint
 
-- Range: 0-100 (percentage)
-- Internally mapped to 0-200 PWM to protect motors
-- Recommended range for normal operation: 30-70
+| Endpoint       | Returns    | Description                      |
+| -------------- | ---------- | -------------------------------- |
+| `GET /capture` | JPEG bytes | Single frame from onboard camera |
 
-## Pin Mapping (update when DRV8833 arrives)
+## Usage in behavior.py
 
-| Pin | Assignment |
-| --- | ---------- |
-| 5   | AIN1       |
-| 6   | AIN2       |
-| 9   | BIN1       |
-| 10  | BIN2       |
+```python
+import requests
+
+ROVER_URL = "http://192.168.1.99"
+
+# Movement
+requests.get(f"{ROVER_URL}/move?direction=forward", timeout=1)
+requests.get(f"{ROVER_URL}/move?direction=backward", timeout=1)
+requests.get(f"{ROVER_URL}/turn?direction=left", timeout=1)
+requests.get(f"{ROVER_URL}/turn?direction=right", timeout=1)
+requests.get(f"{ROVER_URL}/stop", timeout=1)
+requests.get(f"{ROVER_URL}/wobble", timeout=1)
+
+# Vision
+response = requests.get(f"{ROVER_URL}/capture", timeout=2)
+img_array = np.frombuffer(response.content, dtype=np.uint8)
+frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+```
+
+## Safety Rules
+
+- Always call `/stop` before switching directions
+- Always wrap HTTP calls in try/except — rover may be briefly unavailable
+- Use timeout=1 for movement calls, timeout=2 for capture calls
+- Recommended movement call spacing: 0.1s minimum between calls
+
+## Hardware
+
+| Component        | Detail                                            |
+| ---------------- | ------------------------------------------------- |
+| Board            | Freenove ESP32-S3 WROOM                           |
+| Motor Driver     | L298N — ENA/ENB hardwired HIGH, no speed control  |
+| Motor Pins       | IN1→GPIO21, IN2→GPIO47, IN3→GPIO42, IN4→GPIO45    |
+| Camera           | Onboard ESP32-S3 camera, captures at 320x240 JPEG |
+| Frame dimensions | 320x240 (raw from rover)                          |

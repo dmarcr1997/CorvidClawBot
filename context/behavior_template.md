@@ -6,18 +6,18 @@ Codegen agents MUST follow this template. Do not deviate from this structure.
 ## Rules
 
 - Always check blackboard at top of every loop iteration
-- Always call `stop()` before switching directions
+- Always call /stop before switching directions
 - Never remove the wobble/loading state handler
 - Replace TARGET_LABEL with actual detection target
-- Verify box keys match device output before deploying
+- Always wrap HTTP calls in try/except
+- Always use the interpolated_stream for vision — never call /capture directly
 
 ## Detection Shape
 
 ```python
-# detections = {label: [box, box, ...], ...}
-# Each box is a dict — verify exact keys on device by printing raw detections
-# Expected: x, y, width, height, confidence
-# Frame dimensions: 1280x720
+# frame = numpy BGR image from interpolated_stream
+# Run YoloX or cv2 detection on frame directly
+# Frame dimensions after upscale: 640x480
 ```
 
 ## Template
@@ -25,60 +25,81 @@ Codegen agents MUST follow this template. Do not deviate from this structure.
 ```python
 import time
 import json
-from arduino.app_utils import App, Bridge
-from arduino.app_bricks.video_objectdetection import VideoObjectDetection
+import requests
+import cv2
+import numpy as np
+import threading
+import queue
 
 # ── Constants ────────────────────────────────────────────────
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
-OBSTACLE_LARGE_THRESHOLD = 0.3  # 30% of frame area
+ROVER_URL = "http://192.168.1.99"
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+OBSTACLE_LARGE_THRESHOLD = 0.3
 LOST_TARGET_FRAME_LIMIT = 10
-DETECTION_CONFIDENCE = 0.5
 TARGET_LABEL = "person"  # codegen replaces this
 
 # ── State ────────────────────────────────────────────────────
 last_known_position = None
 lost_frames = 0
-latest_detections = {}
-
-# ── Detection Setup ──────────────────────────────────────────
-detection_stream = VideoObjectDetection(confidence=DETECTION_CONFIDENCE, debounce_sec=0.0)
-
-def on_detections(detections: dict):
-    global latest_detections
-    latest_detections = detections
-
-detection_stream.on_detect_all(on_detections)
 
 # ── Helpers ──────────────────────────────────────────────────
 def read_blackboard() -> dict:
     with open("blackboard.json", "r") as f:
         return json.load(f)
 
+def write_blackboard(state: dict):
+    with open("blackboard.json", "w") as f:
+        json.dump(state, f)
+
+def stop():
+    try:
+        requests.get(f"{ROVER_URL}/stop", timeout=1)
+    except Exception:
+        pass
+
+def move(direction: str):
+    try:
+        requests.get(f"{ROVER_URL}/move?direction={direction}", timeout=1)
+    except Exception:
+        pass
+
+def turn(direction: str):
+    try:
+        requests.get(f"{ROVER_URL}/turn?direction={direction}", timeout=1)
+    except Exception:
+        pass
+
 def box_area(box) -> float:
-    """Returns box area as fraction of total frame."""
     return (box["width"] * box["height"]) / (FRAME_WIDTH * FRAME_HEIGHT)
 
 def box_center_x(box) -> float:
-    """Returns horizontal center of box as fraction of frame width."""
     return (box["x"] + box["width"] / 2) / FRAME_WIDTH
 
 def largest_box(boxes: list) -> dict:
-    """Returns the largest bounding box by area."""
     return max(boxes, key=box_area)
 
+def get_detections(frame) -> dict:
+    """Run detection on frame — codegen fills this in per task."""
+    # Example: return {"person": [{"x": 100, "y": 100, "width": 50, "height": 80}]}
+    return {}
+
 # ── Main Loop ────────────────────────────────────────────────
-def loop():
+def loop(frame):
     global last_known_position, lost_frames
 
     # Always check blackboard first — implicit interrupt
     state = read_blackboard()
     if state.get("agent_loading"):
-        Bridge.call("wobble")
+        try:
+            requests.get(f"{ROVER_URL}/wobble", timeout=1)
+        except Exception:
+            pass
         return
 
-    obstacles = latest_detections.get("obstacle", [])
-    targets = latest_detections.get(TARGET_LABEL, [])
+    detections = get_detections(frame)
+    obstacles = detections.get("obstacle", [])
+    targets = detections.get(TARGET_LABEL, [])
 
     # ── Obstacle Avoidance ───────────────────────────────────
     if obstacles:
@@ -88,38 +109,34 @@ def loop():
         is_large = area > OBSTACLE_LARGE_THRESHOLD
         is_center = 0.35 < center_x < 0.65
         is_left = center_x < 0.5
-        is_right = center_x >= 0.5
 
         if is_large:
             if is_center:
-                # Completely blocked — stop and alert
-                Bridge.call("stop")
-                # Write alert to blackboard for comms agent
+                stop()
                 state["health"]["alerts"].append({
                     "type": "obstacle_blocked",
                     "message": "Rover completely blocked by obstacle",
-                    "timestamp": time.time()
+                    "timestamp": time.time(),
+                    "acknowledged": False
                 })
-                with open("blackboard.json", "w") as f:
-                    json.dump(state, f)
+                write_blackboard(state)
             elif is_left:
-                Bridge.call("stop")
+                stop()
                 time.sleep(0.1)
-                Bridge.call("turn", 60, False)  # turn right
+                turn("right")
             else:
-                Bridge.call("stop")
+                stop()
                 time.sleep(0.1)
-                Bridge.call("turn", 60, True)   # turn left
+                turn("left")
         else:
-            # Small obstacle — gentle correction
             if is_center:
-                Bridge.call("stop")
+                stop()
                 time.sleep(0.1)
-                Bridge.call("turn", 30, is_right)
-            elif is_right:
-                Bridge.call("turn", 30, True)   # nudge left
-            elif is_left:
-                Bridge.call("turn", 30, False)  # nudge right
+                turn("right" if center_x >= 0.5 else "left")
+            elif center_x >= 0.5:
+                turn("left")
+            else:
+                turn("right")
 
     # ── Target Following ─────────────────────────────────────
     if targets:
@@ -129,39 +146,41 @@ def loop():
         lost_frames = 0
 
         if center_x < 0.4:
-            Bridge.call("stop")
+            stop()
             time.sleep(0.1)
-            Bridge.call("turn", 40, True)    # turn left toward target
+            turn("left")
         elif center_x > 0.6:
-            Bridge.call("stop")
+            stop()
             time.sleep(0.1)
-            Bridge.call("turn", 40, False)   # turn right toward target
+            turn("right")
         else:
-            Bridge.call("move", 50, True)    # target centered, move forward
+            move("forward")
 
     elif last_known_position is not None:
-        # Follow last known position
         lost_frames += 1
         if lost_frames <= LOST_TARGET_FRAME_LIMIT:
-            Bridge.call("turn", 30, last_known_position < 0.5)
+            turn("left" if last_known_position < 0.5 else "right")
         else:
-            # Target lost — clear state and stop
             last_known_position = None
             lost_frames = 0
-            Bridge.call("stop")
+            stop()
 
-    time.sleep(0.05)  # ~20fps loop
-
-App.run(user_loop=loop)
+# ── Stream + Run ─────────────────────────────────────────────
+if __name__ == "__main__":
+    from stream import interpolated_stream
+    for frame in interpolated_stream(capture_fps=10, interp_steps=5):
+        loop(frame)
 ```
 
 ## Notes for Codegen
 
-- Replace `TARGET_LABEL` with actual detection target e.g. `"face"`, `"person"`, `"cup"`
-- Adjust `DETECTION_CONFIDENCE` per task — lower for harder targets
+- Replace `TARGET_LABEL` with actual detection target
+- Fill in `get_detections()` with appropriate detection logic per task
+- Never call `/capture` directly — always use `interpolated_stream`
 - Never remove the blackboard check at top of `loop()`
 - Always `stop()` + `time.sleep(0.1)` before direction changes
 - Obstacle avoidance runs before target following — priority order matters
-- Write alerts to blackboard health.alerts for comms agent to pick up
-- Keep all Bridge calls within primitives.md
-- Verify box dictionary keys match device output before first deploy
+- Write alerts to `blackboard.health.alerts` for comms to pick up
+- Verify detection box keys match device output on first run
+- Frame dimensions after upscale: 640x480
+- write behavior.py to main.py or up
